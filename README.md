@@ -10,8 +10,5 @@ This repository contains all the code for Exercise 4.
 ## Added Nodes
 * TODO
 
-## Lane Following
-[lf branch](https://github.com/marcus65001/c412e3/tree/lf)
-
 ## License
 [Duckietown](https://www.duckietown.org/about/sw-license)

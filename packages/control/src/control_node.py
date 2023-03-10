@@ -147,9 +147,8 @@ class ControlNode(DTROS):
             self.det_centers=msg.corners
             xs=np.array([i.x for i in self.det_centers])
             self.pd_omega.proportional = (xm:=xs.mean())-400+self.det_offset
-            if abs(self.pd_omega.proportional)<self.det_tolerance:
-                self.pd_omega.proportional=0
-                self.pd_omega.last_error=0
+            if (abs(self.pd_omega.proportional)<self.det_tolerance) or (self.det_distance<self.veh_distance):
+                self.pd_omega.reset()
             if DEBUG_TEXT:
                 self.log("det centers: {}".format(xm))
 

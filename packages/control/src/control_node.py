@@ -68,12 +68,12 @@ class ControlNode(DTROS):
         self.node_name = node_name
         self.veh = rospy.get_param("~veh")
 
-        self.v_p = rospy.get_param("/v_p",0)
-        self.v_d = rospy.get_param("/v_d",0)
-        self.o_lf_p = rospy.get_param("/o_lf_p",0)
-        self.o_lf_d = rospy.get_param("/o_lf_d",0)
-        self.o_t_p = rospy.get_param("/o_t_p",0)
-        self.o_t_d = rospy.get_param("/o_t_d",0)
+        self.v_p = rospy.get_param("/v_p",0.45)
+        self.v_d = rospy.get_param("/v_d",-0.014)
+        self.o_lf_p = rospy.get_param("/o_lf_p",-0.049)
+        self.o_lf_d = rospy.get_param("/o_lf_d",0.004)
+        self.o_t_p = rospy.get_param("/o_t_p",-0.025)
+        self.o_t_d = rospy.get_param("/o_t_d",0.006)
 
         self.jpeg = TurboJPEG()
 
@@ -86,13 +86,13 @@ class ControlNode(DTROS):
         self.det_centers = None
         self.det_retry=10
         self.det_retry_counter = 0
-        self.veh_distance = rospy.get_param("/veh_dist", 0.3)
+        self.veh_distance = rospy.get_param("/veh_dist", 0.24)
 
         self.lf_velocity = rospy.get_param("/lf_v", 0.4)
         self.det_offset = rospy.get_param("/det_offset", 50)
 
-        self.omega_cap = rospy.get_param("/o_cap", 1.0)
-        self.det_tolerance = rospy.get_param("/det_tor", 15)
+        self.omega_cap = rospy.get_param("/o_cap", 11.0)
+        self.det_tolerance = rospy.get_param("/det_tor", 15.0)
 
         self.twist = Twist2DStamped(v=self.lf_velocity, omega=0)
 

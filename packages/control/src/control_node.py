@@ -108,8 +108,9 @@ class ControlNode(DTROS):
         self.pd_omega_tail = self.PD(self.o_t_p,self.o_t_d)
         self.pd_omega_lf = self.PD(self.o_lf_p,self.o_lf_d)
         self.pd_omega = self.pd_omega_lf
-
-        self.pd_v = self.PD(self.v_p,self.v_d)
+        
+        self.pd_v_tail = self.PD(self.v_p,self.v_d)
+        self.pd_v = self.pd_v_tail
         # self.pd_stopping_v = self.PD(P=self.P_2)
         self.pd_v.set_disable(self.lf_velocity)
 

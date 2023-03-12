@@ -8,13 +8,17 @@ from std_msgs.msg import Float32
 from turbojpeg import TurboJPEG
 import cv2
 import numpy as np
+import math
 from duckietown_msgs.msg import WheelsCmdStamped, Twist2DStamped, VehicleCorners, BoolStamped
+from duckietown_msgs.srv import ChangePattern, ChangePatternResponse
+from std_msgs.msg import String
 from enum import Enum, auto
 from collections import namedtuple
 
 
 ROAD_MASK = [(20, 60, 0), (50, 255, 255)]
-DEBUG = False
+# STOP_LINE_MASK = [(0, 130, 178), (179, 255, 255)]
+DEBUG = True
 DEBUG_TEXT = True
 ENGLISH = False
 
@@ -70,6 +74,7 @@ class ControlNode(DTROS):
 
         self.v_p = rospy.get_param("/v_p",0.45)
         self.v_d = rospy.get_param("/v_d",-0.014)
+        # self.P_2 = rospy.get_param("/v_stopping_p", 0.0025)
         self.o_lf_p = rospy.get_param("/o_lf_p",-0.049)
         self.o_lf_d = rospy.get_param("/o_lf_d",0.004)
         self.o_t_p = rospy.get_param("/o_t_p",-0.025)
@@ -96,14 +101,16 @@ class ControlNode(DTROS):
 
         self.twist = Twist2DStamped(v=self.lf_velocity, omega=0)
 
+        # self.stop_ofs = 0.0
+        # self.stop_times_up = False
 
         # PID Variables
         self.pd_omega_tail = self.PD(self.o_t_p,self.o_t_d)
         self.pd_omega_lf = self.PD(self.o_lf_p,self.o_lf_d)
-
         self.pd_omega = self.pd_omega_lf
 
         self.pd_v = self.PD(self.v_p,self.v_d)
+        # self.pd_stopping_v = self.PD(P=self.P_2)
         self.pd_v.set_disable(self.lf_velocity)
 
 
@@ -135,6 +142,11 @@ class ControlNode(DTROS):
         self.sub_det = rospy.Subscriber("/{}/duckiebot_detection_node/detection".format(self.veh),
                                                             BoolStamped,
                                                             self.cb_det, queue_size=1)
+
+        # # Services
+        # self.srvp_led_emitter = rospy.ServiceProxy(
+        #     "~set_pattern", 
+        #     ChangePattern)
 
         # Shutdown hook
         rospy.on_shutdown(self.hook)
@@ -182,6 +194,24 @@ class ControlNode(DTROS):
                 if DEBUG_TEXT:
                     self.log("end tailing")
 
+    #Calculates the midpoint of the contoured object 
+    # def midpoint (self, x, y, w, h):
+    #     mid_x = int(x + (((x+w) - x)/2))
+    #     mid_y = int(y + (((y+h) - y)))
+    #     return (mid_x, mid_y)
+    
+    # def set_led(self, color):
+    #     if color is None:
+    #         return
+    #     self.log("Change LED: {}".format(color))
+    #     msg = String()
+    #     msg.data = color
+    #     try:
+    #         self.srvp_led_emitter(msg)
+    #         self.led_color=color
+    #     except Exception as e:
+    #         self.log("Set LED error: {}".format(e))
+
 
     def callback(self, msg):
         if self.state!=self.State.LF:
@@ -219,9 +249,42 @@ class ControlNode(DTROS):
         else:
             self.pd_omega.proportional = None
 
+        #  # Search for stop line
+        # img2 = self.jpeg.decode(msg.data)
+        # crop2 = img2[320:480,300:640,:]
+
+        # cv2.line (crop2, (320, 240), (0,240), (255,0,0), 1)
+
+        # hsv2 = cv2.cvtColor(crop2, cv2.COLOR_BGR2HSV)
+        # mask2 = cv2.inRange(hsv2, STOP_LINE_MASK[0], STOP_LINE_MASK[1])
+        # contours, hierarchy = cv2.findContours(mask2,
+        #                                        cv2.RETR_EXTERNAL,
+        #                                        cv2.CHAIN_APPROX_SIMPLE)
+
+        # if len(contours) != 0: 
+        #     max_contour = max(contours, key=cv2.contourArea)
+        #     # Generates the size and the cordinantes of the bounding box and draw
+        #     x, y, w, h = cv2.boundingRect(max_contour)
+        #     cv2.rectangle(crop2,(x,y), (x + w, y + h), (0, 255, 0), 1)
+        #     cv2.circle(crop2, self.midpoint(x,y,w,h), 2, (63, 127, 0), -1)
+        #     # Calculate the pixel distance from the middle of the frame
+        #     pixel_distance = math.sqrt(math.pow((160 - self.midpoint(x,y,w,h)[1]),2))
+        #     cv2.line (crop2, self.midpoint(x,y,w,h), (self.midpoint(x,y,w,h)[0], 240), (255,0,0), 1)
+        #     self.pd_v_prop_stop = pixel_distance - self.stop_ofs
+        #     print(pixel_distance)
+            
+        # else: 
+        #     self.pd_v_prop_stop = 0.0
+        #     self.stop_times_up = False
+
+        # if self.proportional_stop == 0.0 or self.stop_times_up:
+        #     self.set_led("LIGHT_OFF")
+
+
         if DEBUG:
             rect_img_msg = CompressedImage(format="jpeg", data=self.jpeg.encode(crop))
             self.pub.publish(rect_img_msg)
+
 
     def drive(self):
         if self.pd_omega.proportional is None:

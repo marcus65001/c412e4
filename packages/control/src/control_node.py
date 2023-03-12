@@ -112,7 +112,7 @@ class ControlNode(DTROS):
         self.pd_v_tail = self.PD(self.v_p,self.v_d)
         self.pd_v = self.pd_v_tail
         # self.pd_stopping_v = self.PD(P=self.P_2)
-        self.pd_v.set_disable(self.lf_velocity)
+        self.pd_v_tail.set_disable(self.lf_velocity)
 
 
         if ENGLISH:
@@ -173,7 +173,7 @@ class ControlNode(DTROS):
         if msg.data:
             if self.state != self.State.TAILING:
                 self.state=self.State.TAILING
-                self.pd_v.set_disable(0)
+                self.pd_v_tail.set_disable(0)
                 self.pd_omega = self.pd_omega_tail
                 self.pd_omega.reset()
                 if DEBUG_TEXT:
@@ -188,7 +188,7 @@ class ControlNode(DTROS):
                 self.pd_omega.reset()
             else:
                 self.state=self.State.LF
-                self.pd_v.set_disable(self.lf_velocity)
+                self.pd_v_tail.set_disable(self.lf_velocity)
                 self.pd_omega=self.pd_omega_lf
                 self.pd_omega.reset()
                 self.det_retry_counter=0

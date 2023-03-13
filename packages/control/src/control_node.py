@@ -336,6 +336,8 @@ class ControlNode(DTROS):
             omega_n=min(self.pd_omega.get(), self.omega_cap)
             if self.twist.omega*omega_n>0:
                 self.turn_count+=1
+            else:
+                self.turn_count=0
             self.twist.v = min(max(self.pd_v.get(),0), self.v_cap)
             self.twist.omega = omega_n
             if self.state==self.State.STOPPING:

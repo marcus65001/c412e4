@@ -27,6 +27,7 @@ class ControlNode(DTROS):
         LF=auto()
         TAILING=auto()
         INTERSECTION=auto()
+        STOPPING=auto()
 
     class PD:
         def __init__(self,P=-0.049,D=0.004):
@@ -41,7 +42,7 @@ class ControlNode(DTROS):
             return "<P={} D={} E={} DIS={}>".format(self.P, self.D, self.proportional, self.disabled_value)
 
         def get(self):
-            if self.disabled_value:
+            if self.disabled_value is not None:
                 return self.disabled_value
             # P Term
             P = self.proportional * self.P
@@ -170,6 +171,8 @@ class ControlNode(DTROS):
             self.det_distance = msg.data
 
     def cb_det(self, msg):
+        if self.state == self.State.STOPPING:
+            return
         if msg.data:
             if self.state != self.State.TAILING:
                 self.state=self.State.TAILING

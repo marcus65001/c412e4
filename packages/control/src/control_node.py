@@ -184,6 +184,8 @@ class ControlNode(DTROS):
             self.log("det: {}".format(self.det_distance))
             self.pd_v.proportional = self.det_distance - self.veh_distance
         else:
+            if self.state==self.State.LF:
+                return
             if self.det_retry_counter<self.det_retry:
                 self.log("lost det, retry")
                 self.det_retry_counter+=1
@@ -223,7 +225,7 @@ class ControlNode(DTROS):
         img2 = self.jpeg.decode(msg.data)
         crop2 = img2[320:480,300:640,:]
 
-        cv2.line (crop2, (320, 240), (0,240), (255,0,0), 1)
+        cv2.line(crop2, (320, 240), (0,240), (255,0,0), 1)
 
         hsv2 = cv2.cvtColor(crop2, cv2.COLOR_BGR2HSV)
         mask2 = cv2.inRange(hsv2, STOP_LINE_MASK[0], STOP_LINE_MASK[1])

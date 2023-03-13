@@ -36,7 +36,7 @@ class ControlNode(DTROS):
             self.D = D
             self.last_error = 0
             self.last_time = rospy.get_time()
-            self.disabled_value=0
+            self.disabled_value= None
 
         def __repr__(self):
             return "<P={} D={} E={} DIS={}>".format(self.P, self.D, self.proportional, self.disabled_value)
@@ -79,6 +79,7 @@ class ControlNode(DTROS):
         self.o_lf_d = rospy.get_param("/e4/o_lf_d",0.004)
         self.o_t_p = rospy.get_param("/e4/o_t_p",-0.025)
         self.o_t_d = rospy.get_param("/e4/o_t_d",0.006)
+        self.P_2 = rospy.get_param("/e4/v_stop_p",0.0025)
 
 
         self.jpeg = TurboJPEG()
@@ -98,12 +99,16 @@ class ControlNode(DTROS):
         self.det_offset = rospy.get_param("/e4/det_offset", 50)
 
         self.omega_cap = rospy.get_param("/e4/o_cap", 11.0)
+        self.v_cap = rospy.get_param("/e4/v_cap", 0.45)
         self.det_tolerance = rospy.get_param("/e4/det_tor", 15.0)
 
         self.twist = Twist2DStamped(v=self.lf_velocity, omega=0)
 
         self.stop_ofs = 0.0
         self.stop_times_up = False
+
+        self.turn_count=0
+        self.LED=None
 
         # PID Variables
         self.pd_omega_tail = self.PD(self.o_t_p,self.o_t_d)
@@ -112,7 +117,7 @@ class ControlNode(DTROS):
 
         self.pd_v_tail = self.PD(self.v_p,self.v_d)
         self.pd_v = self.pd_v_tail
-        # self.pd_stopping_v = self.PD(P=self.P_2)
+        self.pd_stopping_v = self.PD(P=self.P_2,D=0)
         self.pd_v_tail.set_disable(self.lf_velocity)
 
 
@@ -145,10 +150,10 @@ class ControlNode(DTROS):
                                                             BoolStamped,
                                                             self.cb_det, queue_size=1)
 
-        # # Services
-        # self.srvp_led_emitter = rospy.ServiceProxy(
-        #     "~set_pattern", 
-        #     ChangePattern)
+        # Services
+        self.srvp_led_emitter = rospy.ServiceProxy(
+            "~set_pattern",
+            ChangePattern)
 
         # Shutdown hook
         rospy.on_shutdown(self.hook)
@@ -171,12 +176,12 @@ class ControlNode(DTROS):
             self.det_distance = msg.data
 
     def cb_det(self, msg):
-        if self.state == self.State.STOPPING:
-            return
         if msg.data:
+            if self.state == self.State.STOPPING:
+                return
             if self.state != self.State.TAILING:
                 self.state=self.State.TAILING
-                self.pd_v_tail.set_disable(0)
+                self.pd_v_tail.set_disable(None)
                 self.pd_omega = self.pd_omega_tail
                 self.pd_omega.reset()
                 if DEBUG_TEXT:
@@ -184,7 +189,8 @@ class ControlNode(DTROS):
             self.log("det: {}".format(self.det_distance))
             self.pd_v.proportional = self.det_distance - self.veh_distance
         else:
-            if self.state==self.State.LF:
+            self.det_distance=math.inf
+            if self.state==self.State.LF or self.state == self.State.STOPPING:
                 return
             if self.det_retry_counter<self.det_retry:
                 self.log("lost det, retry")
@@ -206,24 +212,40 @@ class ControlNode(DTROS):
         mid_y = int(y + (((y+h) - y)))
         return (mid_x, mid_y)
     
-    # def set_led(self, color):
-    #     if color is None:
-    #         return
-    #     self.log("Change LED: {}".format(color))
-    #     msg = String()
-    #     msg.data = color
-    #     try:
-    #         self.srvp_led_emitter(msg)
-    #         self.led_color=color
-    #     except Exception as e:
-    #         self.log("Set LED error: {}".format(e))
+    def set_led(self, color):
+        if color is None:
+            return
+        self.log("Change LED: {}".format(color))
+        msg = String()
+        msg.data = color
+        try:
+            self.srvp_led_emitter(msg)
+            self.led_color=color
+        except Exception as e:
+            self.log("Set LED error: {}".format(e))
 
+
+    def cb_stopping_timer(self, et):
+        if self.det_distance<self.veh_distance:
+            if DEBUG_TEXT:
+                self.log("[stopping] resume to tailing")
+            self.state=self.State.TAILING
+            self.pd_v = self.pd_v_tail
+            self.pd_v.set_disable(None)
+        else:
+            if DEBUG_TEXT:
+                self.log("[stopping] resume to lane following")
+            self.state=self.State.LF
+            if self.pd_v!=self.pd_v_tail:
+                self.pd_v=self.pd_v_tail
+                self.pd_v.set_disable(self.lf_velocity)
+        if DEBUG_TEXT:
+            self.log("stopping timer up")
 
     def callback(self, msg):
-
+        img = self.jpeg.decode(msg.data)
         # Search for stop line
-        img2 = self.jpeg.decode(msg.data)
-        crop2 = img2[320:480,300:640,:]
+        crop2 = img[320:480,300:640,:]
 
         cv2.line(crop2, (320, 240), (0,240), (255,0,0), 1)
 
@@ -241,18 +263,25 @@ class ControlNode(DTROS):
             cv2.circle(crop2, self.midpoint(x,y,w,h), 2, (63, 127, 0), -1)
             # Calculate the pixel distance from the middle of the frame
             pixel_distance = math.sqrt(math.pow((160 - self.midpoint(x,y,w,h)[1]),2))
-            cv2.line (crop2, self.midpoint(x,y,w,h), (self.midpoint(x,y,w,h)[0], 240), (255,0,0), 1)
-            self.pd_v_prop_stop = pixel_distance - self.stop_ofs
-            print(pixel_distance)
-            
-        else: 
-            self.pd_v_prop_stop = 0.0
-            self.stop_times_up = False
+            cv2.line(crop2, self.midpoint(x,y,w,h), (self.midpoint(x,y,w,h)[0], 240), (255,0,0), 1)
+            pd_v_prop_stop = pixel_distance - self.stop_ofs
+            if DEBUG_TEXT:
+                print("Stop line: {}".format(pixel_distance))
+            if self.state!=self.State.STOPPING:
+                self.state=self.State.STOPPING
+                self.pd_v=self.pd_stopping_v
+                self.pd_v.reset()
+                if DEBUG_TEXT:
+                    self.log("stopping line detected")
+                cb_failsafe = rospy.Timer(rospy.Duration(3), self.cb_stopping_timer, oneshot=True)
+            if abs(pd_v_prop_stop)<15:
+                cb=rospy.Timer(rospy.Duration(1.5), self.cb_stopping_timer, oneshot=True)
+            self.pd_stopping_v.proportional=pd_v_prop_stop
 
         # Part for Lane Following Detection
-        if self.state!=self.State.LF:
+        if self.state==self.State.TAILING:
             return
-        img = self.jpeg.decode(msg.data)
+
         crop = img[300:-1, :, :]
         crop_width = crop.shape[1]
         hsv = cv2.cvtColor(crop, cv2.COLOR_BGR2HSV)
@@ -289,13 +318,34 @@ class ControlNode(DTROS):
             rect_img_msg = CompressedImage(format="jpeg", data=self.jpeg.encode(crop2))
             self.pub.publish(rect_img_msg)
 
+    def cb_led_timer(self,te):
+        self.set_led("LIGHT_OFF")
+        self.LED=None
+        return
+
+    def try_set_led(self,pattern):
+        if self.LED is None:
+            self.LED=pattern
+            self.set_led(self.LED)
+            cbt=rospy.Timer(rospy.Duration(2),self.cb_led_timer,oneshot=True)
 
     def drive(self):
         if self.pd_omega.proportional is None:
             self.twist.omega = 0
         else:
-            self.twist.v = max(self.pd_v.get(),0)
-            self.twist.omega = min(self.pd_omega.get(), self.omega_cap)
+            omega_n=min(self.pd_omega.get(), self.omega_cap)
+            if self.twist.omega*omega_n>0:
+                self.turn_count+=1
+            self.twist.v = min(max(self.pd_v.get(),0), self.v_cap)
+            self.twist.omega = omega_n
+            if self.state==self.State.STOPPING:
+                self.try_set_led("RED")
+            elif self.turn_count>5:
+                self.turn_count=0
+                if omega_n>0:
+                    self.try_set_led("BLUE")
+                else:
+                    self.try_set_led("GREEN")
             if DEBUG_TEXT:
                 self.loginfo([self.state, self.pd_omega, self.pd_v, self.twist.omega, self.twist.v])
 

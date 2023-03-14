@@ -105,7 +105,7 @@ class ControlNode(DTROS):
 
         self.twist = Twist2DStamped(v=self.lf_velocity, omega=0)
 
-        self.stop_ofs = 0.0
+        self.stop_ofs = 5.0
         self.stop_times_up = False
         self.stop_off=False
 
@@ -243,6 +243,8 @@ class ControlNode(DTROS):
                 self.pd_v.set_disable(self.lf_velocity)
         if DEBUG_TEXT:
             self.log("stopping timer up")
+
+    def cb_clear(self,et):
         self.stop_off=False
 
     def callback(self, msg):
@@ -278,6 +280,8 @@ class ControlNode(DTROS):
                     if DEBUG_TEXT:
                         self.log("stopping line detected")
                     cb_failsafe = rospy.Timer(rospy.Duration(3), self.cb_stopping_timer, oneshot=True)
+                    self.stop_off=True
+                    cb_clear=rospy.Timer(rospy.Duration(5),self.cb_clear,oneshot=True)
                 if abs(pd_v_prop_stop)<15 and self.state==self.state.STOPPING:
                     cb=rospy.Timer(rospy.Duration(1.5), self.cb_stopping_timer, oneshot=True)
                 self.pd_stopping_v.proportional=pd_v_prop_stop

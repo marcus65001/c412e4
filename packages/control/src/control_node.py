@@ -108,6 +108,7 @@ class ControlNode(DTROS):
         self.stop_ofs = 5.0
         self.stop_times_up = False
         self.stop_off=False
+        self.stop_cb=None
 
         self.turn_count=0
         self.LED=None
@@ -243,6 +244,7 @@ class ControlNode(DTROS):
                 self.pd_v.set_disable(self.lf_velocity)
         if DEBUG_TEXT:
             self.log("stopping timer up")
+        self.stop_cb=None
 
     def cb_clear(self,et):
         self.stop_off=False
@@ -282,8 +284,8 @@ class ControlNode(DTROS):
                     cb_failsafe = rospy.Timer(rospy.Duration(3), self.cb_stopping_timer, oneshot=True)
                     self.stop_off=True
                     cb_clear=rospy.Timer(rospy.Duration(5),self.cb_clear,oneshot=True)
-                if abs(pd_v_prop_stop)<15 and self.state==self.state.STOPPING:
-                    cb=rospy.Timer(rospy.Duration(1.5), self.cb_stopping_timer, oneshot=True)
+                if abs(pd_v_prop_stop)<15 and self.stop_cb is not None:
+                    self.cb=rospy.Timer(rospy.Duration(1.5), self.cb_stopping_timer, oneshot=True)
                 self.pd_stopping_v.proportional=pd_v_prop_stop
 
         # Part for Lane Following Detection
@@ -350,7 +352,7 @@ class ControlNode(DTROS):
             self.twist.omega = omega_n
             if self.state==self.State.STOPPING:
                 self.try_set_led("RED")
-            elif self.turn_count>5:
+            elif self.turn_count>10:
                 self.turn_count=0
                 if omega_n>0:
                     self.try_set_led("BLUE")

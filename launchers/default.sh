@@ -14,7 +14,7 @@ dt-launchfile-init
 
 # launching app
 dt-exec roslaunch duckiebot_detection duckiebot_detection_node.launch
-dt-exec roslaunch control control_node.launch veh:=csc22909
+dt-exec roslaunch control control_node.launch veh:=csc22925
 
 # ----------------------------------------------------------------------------
 # YOUR CODE ABOVE THIS LINE

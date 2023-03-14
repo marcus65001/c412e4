@@ -73,12 +73,12 @@ class ControlNode(DTROS):
         self.node_name = node_name
         self.veh = rospy.get_param("~veh")
 
-        self.v_p = rospy.get_param("/e4/v_p",0.45)
-        self.v_d = rospy.get_param("/e4/v_d",-0.014)
+        self.v_p = rospy.get_param("/e4/v_p",0.9)
+        self.v_d = rospy.get_param("/e4/v_d",-0.024)
         self.o_lf_p = rospy.get_param("/e4/o_lf_p",-0.049)
         self.o_lf_d = rospy.get_param("/e4/o_lf_d",0.004)
-        self.o_t_p = rospy.get_param("/e4/o_t_p",-0.025)
-        self.o_t_d = rospy.get_param("/e4/o_t_d",0.006)
+        self.o_t_p = rospy.get_param("/e4/o_t_p",-0.035)
+        self.o_t_d = rospy.get_param("/e4/o_t_d",0.007)
         self.P_2 = rospy.get_param("/e4/v_stop_p",0.0025)
 
 
@@ -94,13 +94,13 @@ class ControlNode(DTROS):
         self.det_retry=10
         self.det_retry_counter = 0
         self.det_th=rospy.get_param("/e4/det_th", 0.5)
-        self.veh_distance = rospy.get_param("/e4/veh_dist", 0.18)
+        self.veh_distance = rospy.get_param("/e4/veh_dist", 0.08)
 
-        self.lf_velocity = rospy.get_param("/e4/lf_v", 0.4)
+        self.lf_velocity = rospy.get_param("/e4/lf_v", 0.42)
         self.det_offset = rospy.get_param("/e4/det_offset", 50)
 
         self.omega_cap = rospy.get_param("/e4/o_cap", 11.0)
-        self.v_cap = rospy.get_param("/e4/v_cap", 0.45)
+        self.v_cap = rospy.get_param("/e4/v_cap", 1.0)
         self.det_tolerance = rospy.get_param("/e4/det_tor", 15.0)
 
         self.twist = Twist2DStamped(v=self.lf_velocity, omega=0)
@@ -155,9 +155,9 @@ class ControlNode(DTROS):
                                                             self.cb_det, queue_size=1)
 
         # Services
-        self.srvp_led_emitter = rospy.ServiceProxy(
-            "~set_pattern",
-            ChangePattern)
+        # self.srvp_led_emitter = rospy.ServiceProxy(
+        #     "~set_pattern",
+        #     ChangePattern)
 
         # Shutdown hook
         rospy.on_shutdown(self.hook)
@@ -180,7 +180,7 @@ class ControlNode(DTROS):
             self.det_distance = msg.data
 
     def cb_det(self, msg):
-        if msg.data:
+        if msg.data and self.det_distance<self.det_th:
             if self.state == self.State.STOPPING:
                 return
             if self.state != self.State.TAILING:
@@ -207,6 +207,7 @@ class ControlNode(DTROS):
                 self.pd_omega=self.pd_omega_lf
                 self.pd_omega.reset()
                 self.det_retry_counter=0
+                self.turn_hist.clear()
                 if DEBUG_TEXT:
                     self.log("end tailing")
 
@@ -222,11 +223,11 @@ class ControlNode(DTROS):
         self.log("Change LED: {}".format(color))
         msg = String()
         msg.data = color
-        try:
-            self.srvp_led_emitter(msg)
-            self.led_color=color
-        except Exception as e:
-            self.log("Set LED error: {}".format(e))
+        # try:
+        #     self.srvp_led_emitter(msg)
+        #     self.led_color=color
+        # except Exception as e:
+        #     self.log("Set LED error: {}".format(e))
 
 
     def cb_stopping_timer(self, et):
@@ -357,7 +358,9 @@ class ControlNode(DTROS):
     def get_hist(self):
         if not self.turn_hist:
             return 0
-        return sum(self.turn_hist)/len(self.turn_hist)
+        hist=sum(self.turn_hist)/len(self.turn_hist)
+        self.turn_hist.clear()
+        return hist
 
     def drive(self):
         if self.pd_omega.proportional is None:
@@ -368,7 +371,16 @@ class ControlNode(DTROS):
             self.twist.v = min(max(self.pd_v.get(),0), self.v_cap)
             self.twist.omega = omega_n
             if self.state==self.State.STOPPING:
-                self.try_set_led("RED")
+                # self.try_set_led("RED")
+                self.log("STOP")
+            if self.state==self.State.TAILING:
+                self.push_hist(omega_n)
+                if len(self.turn_hist)>=self.len_turn_hist:
+                    hist=self.get_hist()
+                    if hist>5:
+                        self.log("TURN RIGHT")
+                    elif hist<-5:
+                        self.log("TURN LEFT")
             if DEBUG_TEXT:
                 self.loginfo([self.state, self.pd_omega, self.pd_v, self.twist.omega, self.twist.v])
 

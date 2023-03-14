@@ -28,6 +28,7 @@ class ControlNode(DTROS):
         TAILING=auto()
         INTERSECTION=auto()
         STOPPING=auto()
+        TURNING=auto()
 
     class PD:
         def __init__(self,P=-0.049,D=0.004):
@@ -74,18 +75,18 @@ class ControlNode(DTROS):
         self.veh = rospy.get_param("~veh")
 
         self.params={}
-        def get_param(self, name, default):
+        def get_param(name, default):
             if name not in self.params:
                 self.params[name]=rospy.get_param(name, default)
             return self.params[name]
 
-        self.v_p = self.get_param("/e4/v_p",1.1)
-        self.v_d = self.get_param("/e4/v_d",-0.028)
-        self.o_lf_p = self.get_param("/e4/o_lf_p",-0.049)
-        self.o_lf_d = self.get_param("/e4/o_lf_d",0.004)
-        self.o_t_p = self.get_param("/e4/o_t_p",-0.035)
-        self.o_t_d = self.get_param("/e4/o_t_d",0.007)
-        self.P_2 = self.get_param("/e4/v_stop_p",0.0035)
+        self.v_p = get_param("/e4/v_p",1.1)
+        self.v_d = get_param("/e4/v_d",-0.028)
+        self.o_lf_p = get_param("/e4/o_lf_p",-0.049)
+        self.o_lf_d = get_param("/e4/o_lf_d",0.004)
+        self.o_t_p = get_param("/e4/o_t_p",-0.027)
+        self.o_t_d = get_param("/e4/o_t_d",0.005)
+        self.P_2 = get_param("/e4/v_stop_p",0.0055)
 
 
         self.jpeg = TurboJPEG()
@@ -99,15 +100,15 @@ class ControlNode(DTROS):
         self.det_centers = None
         self.det_retry=10
         self.det_retry_counter = 0
-        self.det_th=self.get_param("/e4/det_th", 0.5)
-        self.veh_distance = self.get_param("/e4/veh_dist", 0.1)
+        self.det_th=get_param("/e4/det_th", 0.5)
+        self.veh_distance = get_param("/e4/veh_dist", 0.1)
 
-        self.lf_velocity = self.get_param("/e4/lf_v", 0.42)
-        self.det_offset = self.get_param("/e4/det_offset", 50)
+        self.lf_velocity = get_param("/e4/lf_v", 0.42)
+        self.det_offset = get_param("/e4/det_offset", 50)
 
-        self.omega_cap = self.get_param("/e4/o_cap", 11.0)
-        self.v_cap = self.get_param("/e4/v_cap", 1.0)
-        self.det_tolerance = self.get_param("/e4/det_tor", 15.0)
+        self.omega_cap = get_param("/e4/o_cap", 11.0)
+        self.v_cap = get_param("/e4/v_cap", 0.82)
+        self.det_tolerance = get_param("/e4/det_tor", 15.0)
 
         self.twist = Twist2DStamped(v=self.lf_velocity, omega=0)
 
@@ -117,8 +118,15 @@ class ControlNode(DTROS):
         self.stop_cb=None
 
         self.turn_hist=[]
-        self.len_turn_hist=10
+        self.len_turn_hist=20
+        self.turn_th=get_param("/e4/turn_th",50)
+        self.turn_factor=get_param("/e4/turn_factor",6.6)
+        self.turn_v = get_param("/e4/turn_v", 0.5)
+        self.turn_time = get_param("/e4/turn_time", 2.0)
         self.LED=None
+        global DEBUG, DEBUG_TEXT
+        DEBUG = get_param("/e4/DEBUG", False)
+        DEBUG_TEXT = get_param("/e4/DEBUG_TEXT", False)
 
         # PID Variables
         self.pd_omega_tail = self.PD(self.o_t_p,self.o_t_d)
@@ -170,17 +178,18 @@ class ControlNode(DTROS):
         rospy.on_shutdown(self.hook)
 
     def cb_process_centers(self, msg):
-        if self.state!=self.State.TAILING:
-            return
         detection = msg.detection.data
         if detection:
             self.det_centers=msg.corners
             xs=np.array([i.x for i in self.det_centers])
-            self.pd_omega.proportional = (xm:=xs.mean())-400+self.det_offset
-            if (abs(self.pd_omega.proportional)<self.det_tolerance) or (self.det_distance<self.veh_distance):
-                self.pd_omega.reset()
-            if DEBUG_TEXT:
-                self.log("det centers: {}".format(xm))
+            if self.state==self.state.TAILING:
+                self.pd_omega.proportional = (xm:=xs.mean())-400+self.det_offset
+                if (abs(self.pd_omega.proportional)<self.det_tolerance) or (self.det_distance<self.veh_distance):
+                    self.pd_omega.reset()
+                if DEBUG_TEXT:
+                    self.log("det centers: {}".format(xm))
+            elif self.state==self.State.STOPPING:
+                self.push_hist((xm:=xs.mean())-400+self.det_offset)
 
     def cb_dist_bot(self, msg):
         if msg.data:
@@ -197,14 +206,16 @@ class ControlNode(DTROS):
                 self.pd_omega.reset()
                 if DEBUG_TEXT:
                     self.log("start tailing")
-            self.log("det: {}".format(self.det_distance))
+            if DEBUG_TEXT:
+                self.log("det: {}".format(self.det_distance))
             self.pd_v.proportional = self.det_distance - self.veh_distance
         else:
             self.det_distance=math.inf
             if self.state==self.State.LF or self.state == self.State.STOPPING:
                 return
             if self.det_retry_counter<self.det_retry:
-                self.log("lost det, retry")
+                if DEBUG_TEXT:
+                    self.log("lost det, retry")
                 self.det_retry_counter+=1
                 self.pd_v.reset()
                 self.pd_omega.reset()
@@ -236,34 +247,59 @@ class ControlNode(DTROS):
         # except Exception as e:
         #     self.log("Set LED error: {}".format(e))
 
+    def cb_turn_timer(self,et):
+        self.state = self.State.TAILING
+        self.pd_v = self.pd_v_tail
+        self.pd_omega=self.pd_omega_tail
+        self.pd_v.set_disable(None)
+        self.pd_omega.set_disable(None)
+        if DEBUG_TEXT:
+            self.log("turn end")
 
     def cb_stopping_timer(self, et):
         if self.state!=self.State.STOPPING:
             return
         self.pd_omega.set_disable(None)
-        if self.det_distance<self.det_th:
-            if DEBUG_TEXT:
-                self.log("[stopping] resume to tailing")
-            self.state=self.State.TAILING
-            self.pd_v = self.pd_v_tail
-            self.pd_v.set_disable(None)
-        else:
-            if DEBUG_TEXT:
-                self.log("[stopping] resume to lane following")
-            self.state=self.State.LF
-            if self.pd_v!=self.pd_v_tail:
-                self.pd_v=self.pd_v_tail
-                self.pd_v.set_disable(self.lf_velocity)
+        if DEBUG_TEXT:
+            self.log("hist: {}".format(self.turn_hist))
+        # hist=self.get_hist()
+        #
+        # if abs(hist)>self.turn_th:
+        #     self.state=self.State.TURNING
+        #     if DEBUG_TEXT:
+        #         self.log("[stopping] turn")
+        #     self.pd_v.set_disable(self.turn_v)
+        #     if hist<0:
+        #         self.log("[stopping] turn left {}".format(hist))
+        #         self.pd_omega.set_disable(self.turn_factor)
+        #     else:
+        #         self.log("[stopping] turn right".format(hist))
+        #         self.pd_omega.set_disable(-self.turn_factor)
+        #     cb_turn=rospy.Timer(rospy.Duration(self.turn_time),self.cb_turn_timer,oneshot=True)
+        # else:
+        #     if DEBUG_TEXT:
+        #         self.log("[stopping] resume to lane following")
+        #     self.state=self.State.LF
+        #     if self.pd_v!=self.pd_v_tail:
+        #         self.pd_v=self.pd_v_tail
+        #         self.pd_v.set_disable(self.lf_velocity)
+        self.state=self.State.TAILING
+        self.pd_v=self.pd_v_tail
+        self.pd_omega=self.pd_omega_tail
+        self.pd_omega.reset()
+        self.pd_v.reset()
         if DEBUG_TEXT:
             self.log("stopping timer up")
         self.stop_cb=None
+        self.stop_off = True
+        cb_clear = rospy.Timer(rospy.Duration(10), self.cb_clear, oneshot=True)
 
     def cb_clear(self,et):
         self.stop_off=False
-        if self.get_hist()>5.0:
-            self.try_set_led("GREEN")
-        elif self.get_hist()<-5.0:
-            self.try_set_led("BLUE")
+        # if self.get_hist()>5.0:
+        #     self.try_set_led("GREEN")
+        # elif self.get_hist()<-5.0:
+        #     self.try_set_led("BLUE")
 
 
     def callback(self, msg):
@@ -300,10 +336,9 @@ class ControlNode(DTROS):
                     if DEBUG_TEXT:
                         self.log("stopping line detected")
                     cb_failsafe = rospy.Timer(rospy.Duration(3), self.cb_stopping_timer, oneshot=True)
-                    self.stop_off=True
-                    cb_clear=rospy.Timer(rospy.Duration(10),self.cb_clear,oneshot=True)
+
                 if abs(pd_v_prop_stop)<15 and self.stop_cb is not None:
-                    self.cb=rospy.Timer(rospy.Duration(1.5), self.cb_stopping_timer, oneshot=True)
+                    self.cb=rospy.Timer(rospy.Duration(1), self.cb_stopping_timer, oneshot=True)
                 self.pd_stopping_v.proportional=pd_v_prop_stop
 
         # Part for Lane Following Detection
@@ -374,20 +409,11 @@ class ControlNode(DTROS):
             self.twist.omega = 0
         else:
             omega_n=min(self.pd_omega.get(), self.omega_cap)
-            self.push_hist(omega_n)
             self.twist.v = min(max(self.pd_v.get(),0), self.v_cap)
             self.twist.omega = omega_n
             if self.state==self.State.STOPPING:
                 # self.try_set_led("RED")
                 self.log("STOP")
-            if self.state==self.State.TAILING:
-                self.push_hist(omega_n)
-                if len(self.turn_hist)>=self.len_turn_hist:
-                    hist=self.get_hist()
-                    if hist>5:
-                        self.log("TURN RIGHT")
-                    elif hist<-5:
-                        self.log("TURN LEFT")
             if DEBUG_TEXT:
                 self.loginfo([self.state, self.pd_omega, self.pd_v, self.twist.omega, self.twist.v])
 

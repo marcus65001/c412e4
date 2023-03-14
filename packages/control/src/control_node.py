@@ -93,7 +93,7 @@ class ControlNode(DTROS):
         self.det_centers = None
         self.det_retry=10
         self.det_retry_counter = 0
-        self.det_th=rospy.get_param("/e4/det_th", 0.3)
+        self.det_th=rospy.get_param("/e4/det_th", 0.5)
         self.veh_distance = rospy.get_param("/e4/veh_dist", 0.18)
 
         self.lf_velocity = rospy.get_param("/e4/lf_v", 0.4)
@@ -110,7 +110,8 @@ class ControlNode(DTROS):
         self.stop_off=False
         self.stop_cb=None
 
-        self.turn_count=0
+        self.turn_hist=[]
+        self.len_turn_hist=10
         self.LED=None
 
         # PID Variables
@@ -229,8 +230,10 @@ class ControlNode(DTROS):
 
 
     def cb_stopping_timer(self, et):
+        if self.state!=self.State.STOPPING:
+            return
         self.pd_omega.set_disable(None)
-        if self.det_distance<self.veh_distance:
+        if self.det_distance<self.det_th:
             if DEBUG_TEXT:
                 self.log("[stopping] resume to tailing")
             self.state=self.State.TAILING
@@ -249,6 +252,11 @@ class ControlNode(DTROS):
 
     def cb_clear(self,et):
         self.stop_off=False
+        if self.get_hist()>5.0:
+            self.try_set_led("GREEN")
+        elif self.get_hist()<-5.0:
+            self.try_set_led("BLUE")
+
 
     def callback(self, msg):
         img = self.jpeg.decode(msg.data)
@@ -341,25 +349,26 @@ class ControlNode(DTROS):
             self.set_led(self.LED)
             cbt=rospy.Timer(rospy.Duration(2),self.cb_led_timer,oneshot=True)
 
+    def push_hist(self,omega):
+        if len(self.turn_hist)>self.len_turn_hist:
+            self.turn_hist.pop(0)
+        self.turn_hist.append(omega)
+
+    def get_hist(self):
+        if not self.turn_hist:
+            return 0
+        return sum(self.turn_hist)/len(self.turn_hist)
+
     def drive(self):
         if self.pd_omega.proportional is None:
             self.twist.omega = 0
         else:
             omega_n=min(self.pd_omega.get(), self.omega_cap)
-            if self.twist.omega*omega_n>0:
-                self.turn_count+=1
-            else:
-                self.turn_count=0
+            self.push_hist(omega_n)
             self.twist.v = min(max(self.pd_v.get(),0), self.v_cap)
             self.twist.omega = omega_n
             if self.state==self.State.STOPPING:
                 self.try_set_led("RED")
-            elif self.turn_count>15:
-                self.turn_count=0
-                if omega_n>0:
-                    self.try_set_led("BLUE")
-                else:
-                    self.try_set_led("GREEN")
             if DEBUG_TEXT:
                 self.loginfo([self.state, self.pd_omega, self.pd_v, self.twist.omega, self.twist.v])
 

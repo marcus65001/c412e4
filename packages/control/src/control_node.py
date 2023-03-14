@@ -105,7 +105,7 @@ class ControlNode(DTROS):
 
         self.twist = Twist2DStamped(v=self.lf_velocity, omega=0)
 
-        self.stop_ofs = 5.0
+        self.stop_ofs = 0.0
         self.stop_times_up = False
         self.stop_off=False
         self.stop_cb=None
@@ -229,6 +229,7 @@ class ControlNode(DTROS):
 
 
     def cb_stopping_timer(self, et):
+        self.pd_omega.set_disable(None)
         if self.det_distance<self.veh_distance:
             if DEBUG_TEXT:
                 self.log("[stopping] resume to tailing")
@@ -275,10 +276,11 @@ class ControlNode(DTROS):
                 pd_v_prop_stop = pixel_distance - self.stop_ofs
                 if DEBUG_TEXT:
                     print("Stop line: {}".format(pixel_distance))
-                if self.state!=self.State.STOPPING:
+                if self.state!=self.State.STOPPING and pixel_distance<60:
                     self.state=self.State.STOPPING
                     self.pd_v=self.pd_stopping_v
                     self.pd_v.reset()
+                    self.pd_omega.set_disable(0)
                     if DEBUG_TEXT:
                         self.log("stopping line detected")
                     cb_failsafe = rospy.Timer(rospy.Duration(3), self.cb_stopping_timer, oneshot=True)
@@ -352,7 +354,7 @@ class ControlNode(DTROS):
             self.twist.omega = omega_n
             if self.state==self.State.STOPPING:
                 self.try_set_led("RED")
-            elif self.turn_count>10:
+            elif self.turn_count>15:
                 self.turn_count=0
                 if omega_n>0:
                     self.try_set_led("BLUE")

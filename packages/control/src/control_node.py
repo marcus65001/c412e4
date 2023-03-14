@@ -73,13 +73,19 @@ class ControlNode(DTROS):
         self.node_name = node_name
         self.veh = rospy.get_param("~veh")
 
-        self.v_p = rospy.get_param("/e4/v_p",0.9)
-        self.v_d = rospy.get_param("/e4/v_d",-0.024)
-        self.o_lf_p = rospy.get_param("/e4/o_lf_p",-0.049)
-        self.o_lf_d = rospy.get_param("/e4/o_lf_d",0.004)
-        self.o_t_p = rospy.get_param("/e4/o_t_p",-0.035)
-        self.o_t_d = rospy.get_param("/e4/o_t_d",0.007)
-        self.P_2 = rospy.get_param("/e4/v_stop_p",0.0025)
+        self.params={}
+        def get_param(self, name, default):
+            if name not in self.params:
+                self.params[name]=rospy.get_param(name, default)
+            return self.params[name]
+
+        self.v_p = self.get_param("/e4/v_p",1.1)
+        self.v_d = self.get_param("/e4/v_d",-0.028)
+        self.o_lf_p = self.get_param("/e4/o_lf_p",-0.049)
+        self.o_lf_d = self.get_param("/e4/o_lf_d",0.004)
+        self.o_t_p = self.get_param("/e4/o_t_p",-0.035)
+        self.o_t_d = self.get_param("/e4/o_t_d",0.007)
+        self.P_2 = self.get_param("/e4/v_stop_p",0.0035)
 
 
         self.jpeg = TurboJPEG()
@@ -93,15 +99,15 @@ class ControlNode(DTROS):
         self.det_centers = None
         self.det_retry=10
         self.det_retry_counter = 0
-        self.det_th=rospy.get_param("/e4/det_th", 0.5)
-        self.veh_distance = rospy.get_param("/e4/veh_dist", 0.08)
+        self.det_th=self.get_param("/e4/det_th", 0.5)
+        self.veh_distance = self.get_param("/e4/veh_dist", 0.1)
 
-        self.lf_velocity = rospy.get_param("/e4/lf_v", 0.42)
-        self.det_offset = rospy.get_param("/e4/det_offset", 50)
+        self.lf_velocity = self.get_param("/e4/lf_v", 0.42)
+        self.det_offset = self.get_param("/e4/det_offset", 50)
 
-        self.omega_cap = rospy.get_param("/e4/o_cap", 11.0)
-        self.v_cap = rospy.get_param("/e4/v_cap", 1.0)
-        self.det_tolerance = rospy.get_param("/e4/det_tor", 15.0)
+        self.omega_cap = self.get_param("/e4/o_cap", 11.0)
+        self.v_cap = self.get_param("/e4/v_cap", 1.0)
+        self.det_tolerance = self.get_param("/e4/det_tor", 15.0)
 
         self.twist = Twist2DStamped(v=self.lf_velocity, omega=0)
 
@@ -160,6 +166,7 @@ class ControlNode(DTROS):
         #     ChangePattern)
 
         # Shutdown hook
+        self.log("parameters:\n{}\n".format(self.params))
         rospy.on_shutdown(self.hook)
 
     def cb_process_centers(self, msg):
@@ -285,7 +292,7 @@ class ControlNode(DTROS):
                 pd_v_prop_stop = pixel_distance - self.stop_ofs
                 if DEBUG_TEXT:
                     print("Stop line: {}".format(pixel_distance))
-                if self.state!=self.State.STOPPING and pixel_distance<60:
+                if self.state!=self.State.STOPPING and pixel_distance<70:
                     self.state=self.State.STOPPING
                     self.pd_v=self.pd_stopping_v
                     self.pd_v.reset()

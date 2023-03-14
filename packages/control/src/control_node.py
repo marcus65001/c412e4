@@ -18,7 +18,7 @@ from collections import namedtuple
 
 ROAD_MASK = [(20, 60, 0), (50, 255, 255)]
 STOP_LINE_MASK = [(0, 130, 178), (179, 255, 255)]
-DEBUG = True
+DEBUG = False
 DEBUG_TEXT = True
 ENGLISH = False
 
@@ -93,6 +93,7 @@ class ControlNode(DTROS):
         self.det_centers = None
         self.det_retry=10
         self.det_retry_counter = 0
+        self.det_th=rospy.get_param("/e4/det_th", 0.3)
         self.veh_distance = rospy.get_param("/e4/veh_dist", 0.18)
 
         self.lf_velocity = rospy.get_param("/e4/lf_v", 0.4)
@@ -106,6 +107,7 @@ class ControlNode(DTROS):
 
         self.stop_ofs = 0.0
         self.stop_times_up = False
+        self.stop_off=False
 
         self.turn_count=0
         self.LED=None
@@ -241,42 +243,44 @@ class ControlNode(DTROS):
                 self.pd_v.set_disable(self.lf_velocity)
         if DEBUG_TEXT:
             self.log("stopping timer up")
+        self.stop_off=False
 
     def callback(self, msg):
         img = self.jpeg.decode(msg.data)
         # Search for stop line
-        crop2 = img[320:480,300:640,:]
+        if not self.stop_off:
+            crop2 = img[320:480,300:640,:]
 
-        cv2.line(crop2, (320, 240), (0,240), (255,0,0), 1)
+            cv2.line(crop2, (320, 240), (0,240), (255,0,0), 1)
 
-        hsv2 = cv2.cvtColor(crop2, cv2.COLOR_BGR2HSV)
-        mask2 = cv2.inRange(hsv2, STOP_LINE_MASK[0], STOP_LINE_MASK[1])
-        contours, hierarchy = cv2.findContours(mask2,
-                                               cv2.RETR_EXTERNAL,
-                                               cv2.CHAIN_APPROX_SIMPLE)
+            hsv2 = cv2.cvtColor(crop2, cv2.COLOR_BGR2HSV)
+            mask2 = cv2.inRange(hsv2, STOP_LINE_MASK[0], STOP_LINE_MASK[1])
+            contours, hierarchy = cv2.findContours(mask2,
+                                                   cv2.RETR_EXTERNAL,
+                                                   cv2.CHAIN_APPROX_SIMPLE)
 
-        if len(contours) != 0: 
-            max_contour = max(contours, key=cv2.contourArea)
-            # Generates the size and the cordinantes of the bounding box and draw
-            x, y, w, h = cv2.boundingRect(max_contour)
-            cv2.rectangle(crop2,(x,y), (x + w, y + h), (0, 255, 0), 1)
-            cv2.circle(crop2, self.midpoint(x,y,w,h), 2, (63, 127, 0), -1)
-            # Calculate the pixel distance from the middle of the frame
-            pixel_distance = math.sqrt(math.pow((160 - self.midpoint(x,y,w,h)[1]),2))
-            cv2.line(crop2, self.midpoint(x,y,w,h), (self.midpoint(x,y,w,h)[0], 240), (255,0,0), 1)
-            pd_v_prop_stop = pixel_distance - self.stop_ofs
-            if DEBUG_TEXT:
-                print("Stop line: {}".format(pixel_distance))
-            if self.state!=self.State.STOPPING:
-                self.state=self.State.STOPPING
-                self.pd_v=self.pd_stopping_v
-                self.pd_v.reset()
+            if len(contours) != 0:
+                max_contour = max(contours, key=cv2.contourArea)
+                # Generates the size and the cordinantes of the bounding box and draw
+                x, y, w, h = cv2.boundingRect(max_contour)
+                cv2.rectangle(crop2,(x,y), (x + w, y + h), (0, 255, 0), 1)
+                cv2.circle(crop2, self.midpoint(x,y,w,h), 2, (63, 127, 0), -1)
+                # Calculate the pixel distance from the middle of the frame
+                pixel_distance = math.sqrt(math.pow((160 - self.midpoint(x,y,w,h)[1]),2))
+                cv2.line(crop2, self.midpoint(x,y,w,h), (self.midpoint(x,y,w,h)[0], 240), (255,0,0), 1)
+                pd_v_prop_stop = pixel_distance - self.stop_ofs
                 if DEBUG_TEXT:
-                    self.log("stopping line detected")
-                cb_failsafe = rospy.Timer(rospy.Duration(3), self.cb_stopping_timer, oneshot=True)
-            if abs(pd_v_prop_stop)<15:
-                cb=rospy.Timer(rospy.Duration(1.5), self.cb_stopping_timer, oneshot=True)
-            self.pd_stopping_v.proportional=pd_v_prop_stop
+                    print("Stop line: {}".format(pixel_distance))
+                if self.state!=self.State.STOPPING:
+                    self.state=self.State.STOPPING
+                    self.pd_v=self.pd_stopping_v
+                    self.pd_v.reset()
+                    if DEBUG_TEXT:
+                        self.log("stopping line detected")
+                    cb_failsafe = rospy.Timer(rospy.Duration(3), self.cb_stopping_timer, oneshot=True)
+                if abs(pd_v_prop_stop)<15 and self.state==self.state.STOPPING:
+                    cb=rospy.Timer(rospy.Duration(1.5), self.cb_stopping_timer, oneshot=True)
+                self.pd_stopping_v.proportional=pd_v_prop_stop
 
         # Part for Lane Following Detection
         if self.state==self.State.TAILING:

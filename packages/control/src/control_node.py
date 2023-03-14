@@ -285,7 +285,7 @@ class ControlNode(DTROS):
                         self.log("stopping line detected")
                     cb_failsafe = rospy.Timer(rospy.Duration(3), self.cb_stopping_timer, oneshot=True)
                     self.stop_off=True
-                    cb_clear=rospy.Timer(rospy.Duration(5),self.cb_clear,oneshot=True)
+                    cb_clear=rospy.Timer(rospy.Duration(10),self.cb_clear,oneshot=True)
                 if abs(pd_v_prop_stop)<15 and self.stop_cb is not None:
                     self.cb=rospy.Timer(rospy.Duration(1.5), self.cb_stopping_timer, oneshot=True)
                 self.pd_stopping_v.proportional=pd_v_prop_stop

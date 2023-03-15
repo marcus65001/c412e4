@@ -30,6 +30,7 @@ class ControlNode(DTROS):
         STOPPING=auto()
         TURNING=auto()
 
+    # PD class
     class PD:
         def __init__(self,P=-0.049,D=0.004):
             self.proportional = None
@@ -43,6 +44,7 @@ class ControlNode(DTROS):
             return "<P={} D={} E={} DIS={}>".format(self.P, self.D, self.proportional, self.disabled_value)
 
         def get(self):
+            # get the output of the PD
             if self.disabled_value is not None:
                 return self.disabled_value
             # P Term
@@ -54,16 +56,16 @@ class ControlNode(DTROS):
             self.last_time = rospy.get_time()
             D = d_error * self.D
 
-            # print("PD terms: {} {}".format(P,D))
-
             return P+D
 
         def reset(self):
+            # reset the PD controller
             self.proportional=0
             self.last_error=0
             self.last_time = rospy.get_time()
 
         def set_disable(self,value):
+            # set the PD controller to output a constant
             self.disabled_value = value
             self.reset()
 
@@ -76,6 +78,7 @@ class ControlNode(DTROS):
 
         self.params={}
         def get_param(name, default):
+            # getting parameters from rosparam
             if name not in self.params:
                 self.params[name]=rospy.get_param(name, default)
             return self.params[name]
@@ -178,12 +181,13 @@ class ControlNode(DTROS):
         rospy.on_shutdown(self.hook)
 
     def cb_process_centers(self, msg):
+        # dot pattern centers callback
         detection = msg.detection.data
         if detection:
             self.det_centers=msg.corners
             xs=np.array([i.x for i in self.det_centers])
             if self.state==self.state.TAILING:
-                self.pd_omega.proportional = (xm:=xs.mean())-400+self.det_offset
+                self.pd_omega.proportional = (xm:=xs.mean())-400+self.det_offset  # x value of the pattern
                 if (abs(self.pd_omega.proportional)<self.det_tolerance) or (self.det_distance<self.veh_distance):
                     self.pd_omega.reset()
                 if DEBUG_TEXT:
@@ -193,13 +197,16 @@ class ControlNode(DTROS):
 
     def cb_dist_bot(self, msg):
         if msg.data:
+            # update detected distance
             self.det_distance = msg.data
 
     def cb_det(self, msg):
-        if msg.data and self.det_distance<self.det_th:
+        # vehicle detection (boolean) callback
+        if msg.data and self.det_distance<self.det_th:  # make sure under detection threshold
             if self.state == self.State.STOPPING:
                 return
             if self.state != self.State.TAILING:
+                # switch state and PD controllers
                 self.state=self.State.TAILING
                 self.pd_v_tail.set_disable(None)
                 self.pd_omega = self.pd_omega_tail
@@ -210,7 +217,7 @@ class ControlNode(DTROS):
                 self.log("det: {}".format(self.det_distance))
             self.pd_v.proportional = self.det_distance - self.veh_distance
         else:
-            self.det_distance=math.inf
+            self.det_distance=math.inf  # assume infinite distance when no detection
             if self.state==self.State.LF or self.state == self.State.STOPPING:
                 return
             if self.det_retry_counter<self.det_retry:
@@ -220,8 +227,9 @@ class ControlNode(DTROS):
                 self.pd_v.reset()
                 self.pd_omega.reset()
             else:
+                # switch state and PD controllers
                 self.state=self.State.LF
-                self.pd_v_tail.set_disable(self.lf_velocity)
+                self.pd_v_tail.set_disable(self.lf_velocity)  # constant speed
                 self.pd_omega=self.pd_omega_lf
                 self.pd_omega.reset()
                 self.det_retry_counter=0
@@ -283,6 +291,8 @@ class ControlNode(DTROS):
         #     if self.pd_v!=self.pd_v_tail:
         #         self.pd_v=self.pd_v_tail
         #         self.pd_v.set_disable(self.lf_velocity)
+
+        # switch state and PD controller
         self.state=self.State.TAILING
         self.pd_v=self.pd_v_tail
         self.pd_omega=self.pd_omega_tail
@@ -335,6 +345,7 @@ class ControlNode(DTROS):
                     self.pd_omega.set_disable(0)
                     if DEBUG_TEXT:
                         self.log("stopping line detected")
+                    # failsafe callback
                     cb_failsafe = rospy.Timer(rospy.Duration(3), self.cb_stopping_timer, oneshot=True)
 
                 if abs(pd_v_prop_stop)<15 and self.stop_cb is not None:
@@ -408,6 +419,7 @@ class ControlNode(DTROS):
         if self.pd_omega.proportional is None:
             self.twist.omega = 0
         else:
+            # get omega and v from current PD
             omega_n=min(self.pd_omega.get(), self.omega_cap)
             self.twist.v = min(max(self.pd_v.get(),0), self.v_cap)
             self.twist.omega = omega_n

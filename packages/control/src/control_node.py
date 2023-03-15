@@ -160,16 +160,16 @@ class ControlNode(DTROS):
                                        Twist2DStamped,
                                        queue_size=1)
 
-        self.sub_centers = rospy.Subscriber("/{}/duckiebot_detection_node/centers".format(self.veh), VehicleCorners,
-                                            self.cb_process_centers, queue_size=1)
+        # self.sub_centers = rospy.Subscriber("/{}/duckiebot_detection_node/centers".format(self.veh), VehicleCorners,
+        #                                     self.cb_process_centers, queue_size=1)
 
-        self.sub_distance_to_robot_ahead = rospy.Subscriber("/{}/duckiebot_distance_node/distance".format(self.veh),
-                                                            Float32,
-                                                            self.cb_dist_bot, queue_size=1)
+        # self.sub_distance_to_robot_ahead = rospy.Subscriber("/{}/duckiebot_distance_node/distance".format(self.veh),
+        #                                                     Float32,
+        #                                                     self.cb_dist_bot, queue_size=1)
 
-        self.sub_det = rospy.Subscriber("/{}/duckiebot_detection_node/detection".format(self.veh),
-                                                            BoolStamped,
-                                                            self.cb_det, queue_size=1)
+        # self.sub_det = rospy.Subscriber("/{}/duckiebot_detection_node/detection".format(self.veh),
+        #                                                     BoolStamped,
+        #                                                     self.cb_det, queue_size=1)
 
         # Services
         # self.srvp_led_emitter = rospy.ServiceProxy(
@@ -351,6 +351,64 @@ class ControlNode(DTROS):
                 if abs(pd_v_prop_stop)<15 and self.stop_cb is not None:
                     self.cb=rospy.Timer(rospy.Duration(1), self.cb_stopping_timer, oneshot=True)
                 self.pd_stopping_v.proportional=pd_v_prop_stop
+
+        if self.state!=self.State.STOPPING:
+            lower_blue = np.array([100, 150, 0])
+            upper_blue = np.array([140, 255, 255])
+            hsv_f = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
+            mask_f=cv2.inRange(hsv_f, lower_blue, upper_blue)
+            contours, hierarchy = cv2.findContours(mask_f,
+                                                   cv2.RETR_EXTERNAL,
+                                                   cv2.CHAIN_APPROX_SIMPLE)
+
+            max_contour=None
+            area=0
+            if len(contours) != 0:
+                max_contour = max(contours, key=cv2.contourArea)
+                M = cv2.moments(max_contour)
+                cX = int(M["m10"] / M["m00"])
+                # cY = int(M["m01"] / M["m00"])
+                area = cv2.contourArea(max_contour)
+                self.log("cx: {} area: {}".format(cX,area))
+
+            if max_contour is not None and area>2500:
+                if self.state != self.state.STOPPING:
+                    self.pd_omega.proportional = cX - 400 + self.det_offset  # x value of the pattern
+                    if self.state != self.State.TAILING:
+                        # switch state and PD controllers
+                        self.state = self.State.TAILING
+                        self.pd_v_tail.set_disable(None)
+                        self.pd_omega = self.pd_omega_tail
+                        self.pd_omega.reset()
+                        if DEBUG_TEXT:
+                            self.log("start tailing")
+                    if DEBUG_TEXT:
+                        self.log("det: {}".format(self.det_distance))
+                    self.pd_v.proportional = (area - 61454) // 61434
+
+                elif self.state == self.State.STOPPING:
+                    self.push_hist(cX - 400 + self.det_offset)
+
+            else:
+                self.det_distance = math.inf  # assume infinite distance when no detection
+                if self.state == self.State.LF or self.state == self.State.STOPPING:
+                    return
+                if self.det_retry_counter < self.det_retry:
+                    if DEBUG_TEXT:
+                        self.log("lost det, retry")
+                    self.det_retry_counter += 1
+                    self.pd_v.reset()
+                    self.pd_omega.reset()
+                else:
+                    # switch state and PD controllers
+                    self.state = self.State.LF
+                    self.pd_v_tail.set_disable(self.lf_velocity)  # constant speed
+                    self.pd_omega = self.pd_omega_lf
+                    self.pd_omega.reset()
+                    self.det_retry_counter = 0
+                    self.turn_hist.clear()
+                    if DEBUG_TEXT:
+                        self.log("end tailing")
 
         # Part for Lane Following Detection
         if self.state==self.State.TAILING:
